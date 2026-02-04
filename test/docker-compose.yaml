@@ -1,0 +1,150 @@
+version: '3.9'
+
+services:
+
+  backend:
+    build:
+      context: ./Ploshadka1
+      dockerfile: Dockerfile
+    command:
+      - gunicorn
+      - cargo_it_platform.wsgi:application
+      - --bind
+      - 0.0.0.0:8000
+    links:
+      - rabbitmq
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: always
+    depends_on:
+      - database
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+    volumes:
+      - static:/app/static
+      - media:/app/media
+    image: cargo_it_django_app
+
+  frontend:
+    image: cargo-it-app
+    build:
+      context: ./cargo-it
+      target: production
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_BE_HOST=http://backend:8000
+    env_file:
+      - .env
+    command: pnpm start
+
+  database:
+    image: postgres:14.10-alpine
+    restart: always
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data/
+    environment:
+      - DB_HOST=${DB_HOST}
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASS}
+    env_file:
+      - .env
+    ports:
+      - '5432:5432'
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  rabbitmq:
+    image: rabbitmq:management
+    restart: always
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASS}
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  celery:
+    build:
+      context: ./Ploshadka1
+      dockerfile: Dockerfile
+    image: cargo_it_django_app-celery
+    entrypoint: ["celery", "-A", "cargo_it_platform", "worker", "-l", "info"]
+    depends_on:
+      - rabbitmq
+      - backend
+    restart: always
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  celery-beat:
+    build:
+      context: ./Ploshadka1
+      dockerfile: Dockerfile
+    image: cargo_it_django_app-celery-beat
+    entrypoint: ["celery", "-A", "cargo_it_platform", "beat", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler", "-l", "info"]
+    depends_on:
+      - rabbitmq
+      - backend
+    restart: always
+    env_file:
+      - .env
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+  redis:
+    image: redis:7.4.1-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 20 1 --loglevel warning --requirepass ${REDIS_PASSWORD}
+    env_file:
+      - .env
+
+  nginx:
+    image: nginx:1.24-alpine
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf
+      - static:/static
+      - media:/media
+    depends_on:
+      - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+
+volumes:
+  postgres_data:
+  static:
+  media:
+  redis_data:
